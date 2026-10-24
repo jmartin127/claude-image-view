@@ -1,8 +1,8 @@
 export type Size = { width: number; height: number }
 export type Cells = { columns: number; rows: number }
 
-const TILE_ROWS = 6
-const MAX_COLUMNS = 32
+const TILE_ROWS = 10
+const MAX_COLUMNS = 48
 const MIN_COLUMNS = 4
 // A terminal cell is about twice as tall as it is wide.
 const CELL_ASPECT = 2
@@ -74,8 +74,9 @@ type Env = Readonly<Record<string, string | undefined>>
  * Whether Claude Code will draw `Image` as a real picture. It decides that itself and doesn't tell
  * mods, so this mirrors its rule as far as the environment shows it: always when
  * CLAUDE_CODE_FORCE_TERMINAL_IMAGES is set; otherwise never inside tmux or screen or in a
- * background session, and only when the terminal is kitty or Ghostty (it goes by the terminal's
- * name, so other kitty-protocol terminals such as WezTerm still get the `alt` text).
+ * background session, and only when the terminal is kitty, Ghostty or iTerm2 (it goes by the
+ * terminal's name, so other kitty-protocol terminals such as WezTerm still get the `alt` text).
+ * iTerm2 draws only byte sources (`{ png }`), not `{ file }`.
  * `CLAUDE_IMAGE_VIEW_RENDERER` overrides the guess: `image` for the picture, `blocks` for colored half blocks.
  */
 export function drawsPictures(env: Env): boolean {
@@ -86,7 +87,7 @@ export function drawsPictures(env: Env): boolean {
   return (
     Boolean(env.KITTY_WINDOW_ID || env.GHOSTTY_RESOURCES_DIR) ||
     /kitty|ghostty/i.test(env.TERM ?? '') ||
-    /^ghostty$/i.test(env.TERM_PROGRAM ?? '')
+    /^(ghostty|iTerm\.app)$/i.test(env.TERM_PROGRAM ?? '')
   )
 }
 

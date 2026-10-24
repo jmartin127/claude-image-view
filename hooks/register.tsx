@@ -29,14 +29,20 @@ const unconvertible = new Set<string>()
 // Small decoded copies for terminals that can't draw pictures, which get colored blocks instead.
 const thumbs = new Map<string, Thumb | null>()
 let pictures: boolean | undefined
+// iTerm2 draws only byte sources, so it's handed the PNG itself, base64, instead of its path.
+let bytesOnly = false
+const pngBytes = new Map<string, string>()
+// The most a byte source may hold, decoded.
+const MAX_SOURCE_BYTES = 2 * 1024 * 1024
 
 // Claude Code doesn't tell mods whether its Image draws a picture, so go by the environment
 // it decides from.
 async function canDrawPictures($: EngineInterface): Promise<boolean> {
   if (pictures === undefined) {
+    const termProgram = await $.env.get('TERM_PROGRAM')
     pictures = drawsPictures({
       TERM: await $.env.get('TERM'),
-      TERM_PROGRAM: await $.env.get('TERM_PROGRAM'),
+      TERM_PROGRAM: termProgram,
       TMUX: await $.env.get('TMUX'),
       STY: await $.env.get('STY'),
       KITTY_WINDOW_ID: await $.env.get('KITTY_WINDOW_ID'),
@@ -45,8 +51,27 @@ async function canDrawPictures($: EngineInterface): Promise<boolean> {
       CLAUDE_CODE_SESSION_KIND: await $.env.get('CLAUDE_CODE_SESSION_KIND'),
       CLAUDE_IMAGE_VIEW_RENDERER: await $.env.get('CLAUDE_IMAGE_VIEW_RENDERER'),
     })
+    bytesOnly = pictures && termProgram === 'iTerm.app'
   }
   return pictures
+}
+
+function decodedLength(base64: string): number {
+  return Math.floor((base64.length * 3) / 4) - (base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0)
+}
+
+// A copy of a PNG too big for a byte source, shrunk to 800px on its longest side, base64;
+// undefined when sips can't make or the mod can't read it.
+async function shrunkPng($: EngineInterface, dir: string, n: number, path: string): Promise<string | undefined> {
+  const out = `${dir.replace(/\/images$/, '')}/image-view-${n}-small.png`
+  const { exitCode } = await $.process
+    .run(['sips', '-s', 'format', 'png', '-Z', '800', path, '--out', out])
+    .catch(() => ({ exitCode: 1 }))
+  if (exitCode !== 0) return undefined
+  return $.fs.read(out, { as: 'bytes' }).then(
+    bytes => bytes.base64,
+    () => undefined,
+  )
 }
 
 // Claude Code keeps its temp files in <base>/claude-<uid>, or <base>\claude on Windows. The base
@@ -117,7 +142,15 @@ async function describe($: EngineInterface, dir: string | undefined, n: number):
       return { n, path: null, size: null }
     }
     sizes.set(path, head ?? null)
-    if (base64 !== undefined && !(await canDrawPictures($))) thumbs.set(path, decodeThumb(Uint8Array.fromBase64(base64)))
+    if (!(await canDrawPictures($))) {
+      if (base64 !== undefined) thumbs.set(path, decodeThumb(Uint8Array.fromBase64(base64)))
+    } else if (bytesOnly) {
+      // Too big for a byte source (or for $.fs.read): draw a shrunk copy, else colored blocks.
+      let bytes = base64
+      if (bytes === undefined || decodedLength(bytes) > MAX_SOURCE_BYTES) bytes = (await shrunkPng($, dir!, n, path)) ?? bytes
+      if (bytes !== undefined && decodedLength(bytes) <= MAX_SOURCE_BYTES) pngBytes.set(path, bytes)
+      else if (bytes !== undefined) thumbs.set(path, decodeThumb(Uint8Array.fromBase64(bytes)))
+    }
   }
   return { n, path, size: sizes.get(path) ?? null }
 }
@@ -185,7 +218,7 @@ export const register: Register = on => {
                 ) : (
                   <Image
                     key={`image-${image.n}`}
-                    source={{ file: image.path, format: 'png' }}
+                    source={pngBytes.has(image.path) ? { png: pngBytes.get(image.path)! } : { file: image.path, format: 'png' }}
                     columns={columns}
                     rows={rows}
                     alt={`[Image #${image.n}]`}

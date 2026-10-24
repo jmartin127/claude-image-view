@@ -28,18 +28,18 @@ test('PNG size is read from the IHDR header', () => {
 })
 
 test('thumbnails keep aspect ratio within the tile', () => {
-  // Square: 6 rows tall, twice as many columns because cells are tall.
-  expect(fitCells({ width: 500, height: 500 })).toEqual({ columns: 12, rows: 6 })
-  // Very wide: capped at 32 columns, rows shrink to match.
-  expect(fitCells({ width: 3000, height: 500 })).toEqual({ columns: 32, rows: 3 })
+  // Square: 10 rows tall, twice as many columns because cells are tall.
+  expect(fitCells({ width: 500, height: 500 })).toEqual({ columns: 20, rows: 10 })
+  // Very wide: capped at 48 columns, rows shrink to match.
+  expect(fitCells({ width: 3000, height: 500 })).toEqual({ columns: 48, rows: 4 })
   // Very tall: never narrower than 4 columns.
-  expect(fitCells({ width: 100, height: 2000 })).toEqual({ columns: 4, rows: 6 })
+  expect(fitCells({ width: 100, height: 2000 })).toEqual({ columns: 4, rows: 10 })
 })
 
 test('a row of tiles shrinks to fit the band so it never scrolls', () => {
   const square = { width: 500, height: 500 }
-  // Plenty of room: full 6-row tiles.
-  expect(fitRow([square], 20, 120)).toEqual([{ columns: 12, rows: 6 }])
+  // Plenty of room: full 10-row tiles.
+  expect(fitRow([square], 20, 120)).toEqual([{ columns: 20, rows: 10 }])
   // A short band: border and label take 3 rows, so the picture gets the rest.
   expect(fitRow([square], 7, 120)).toEqual([{ columns: 8, rows: 4 }])
   // A narrow band: three 6-row squares need 3 * 14 + 2 = 44 columns; 40 forces 5 rows.
@@ -93,7 +93,7 @@ test('a pasted image shows without another keystroke and clears when the draft d
 
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   const image = await ui.find({ type: 'Image' })
-  expect(image?.props).toMatchObject({ source: { file: `${dir}/1.png`, format: 'png' }, columns: 24, rows: 6 })
+  expect(image?.props).toMatchObject({ source: { file: `${dir}/1.png`, format: 'png' }, columns: 40, rows: 10 })
   // #2 has no cached file, so it gets a placeholder tile instead of a broken Image.
   expect(await ui.find({ type: 'Text', text: 'no preview' })).toBeDefined()
   await ui.unmount()
@@ -231,7 +231,7 @@ test('a webp paste is converted to PNG once and drawn from the converted file', 
   expect(runs).toEqual([['sips', '-s', 'format', 'png', '-Z', '800', `${dir}/1.webp`, '--out', out]])
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   const image = await ui.find({ type: 'Image' })
-  expect(image?.props).toMatchObject({ source: { file: out, format: 'png' }, columns: 24, rows: 6 })
+  expect(image?.props).toMatchObject({ source: { file: out, format: 'png' }, columns: 40, rows: 10 })
 })
 // Real PNGs made with zlib, each row using a different PNG filter (none, sub, up, average, paeth).
 // RGBA 64x40, dynamic Huffman blocks: x < 32 opaque, the rest half transparent.
@@ -292,10 +292,11 @@ test('a thumbnail is averaged down into half-block cells', () => {
   expect(words[2]).toBe(color(10)) // ...and its background the one below
 })
 
-test('real pictures only where Claude Code draws them: kitty and Ghostty, or when forced', () => {
+test('real pictures only where Claude Code draws them: kitty, Ghostty and iTerm2, or when forced', () => {
   expect(drawsPictures({ TERM: 'xterm-kitty' })).toBe(true)
   expect(drawsPictures({ TERM_PROGRAM: 'ghostty' })).toBe(true)
   expect(drawsPictures({ KITTY_WINDOW_ID: '4' })).toBe(true)
+  expect(drawsPictures({ TERM: 'xterm-256color', TERM_PROGRAM: 'iTerm.app' })).toBe(true)
   expect(drawsPictures({ TERM: 'xterm-256color', TERM_PROGRAM: 'Apple_Terminal' })).toBe(false)
   expect(drawsPictures({ TERM_PROGRAM: 'vscode' })).toBe(false)
   // WezTerm speaks the protocol, but Claude Code only trusts kitty and Ghostty by name.
@@ -304,11 +305,15 @@ test('real pictures only where Claude Code draws them: kitty and Ghostty, or whe
   expect(drawsPictures({ TERM: 'xterm-kitty', TMUX: '/tmp/tmux-501/default,1,0' })).toBe(false)
   expect(drawsPictures({ TERM: 'xterm-kitty', STY: '1234.pts-0.host' })).toBe(false)
   expect(drawsPictures({ TERM: 'xterm-kitty', CLAUDE_CODE_SESSION_KIND: 'bg' })).toBe(false)
+  expect(drawsPictures({ TERM_PROGRAM: 'iTerm.app', TMUX: '/tmp/tmux-501/default,1,0' })).toBe(false)
+  expect(drawsPictures({ TERM_PROGRAM: 'iTerm.app', STY: '1234.pts-0.host' })).toBe(false)
+  expect(drawsPictures({ TERM_PROGRAM: 'iTerm.app', CLAUDE_CODE_SESSION_KIND: 'bg' })).toBe(false)
   // ...unless they're forced on, which it honors anywhere.
   expect(drawsPictures({ TMUX: '/tmp/tmux-501/default,1,0', CLAUDE_CODE_FORCE_TERMINAL_IMAGES: '1' })).toBe(true)
   // An override beats guessing from the environment.
-  expect(drawsPictures({ TERM_PROGRAM: 'iTerm.app', CLAUDE_IMAGE_VIEW_RENDERER: 'image' })).toBe(true)
+  expect(drawsPictures({ TERM_PROGRAM: 'Apple_Terminal', CLAUDE_IMAGE_VIEW_RENDERER: 'image' })).toBe(true)
   expect(drawsPictures({ TERM: 'xterm-kitty', CLAUDE_IMAGE_VIEW_RENDERER: 'blocks' })).toBe(false)
+  expect(drawsPictures({ TERM_PROGRAM: 'iTerm.app', CLAUDE_IMAGE_VIEW_RENDERER: 'blocks' })).toBe(false)
 })
 
 for (const [name, env, drawn, notDrawn] of [
@@ -336,8 +341,8 @@ for (const [name, env, drawn, notDrawn] of [
 
     const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
     expect(await ui.find({ type: notDrawn })).toBeUndefined()
-    // 64x40 is wider than tall: 6 rows of cells, twice as many columns as 6 * 64 / 40 pixels.
-    expect((await ui.find({ type: drawn }))?.props).toMatchObject({ columns: 19, rows: 6 })
+    // 64x40 is wider than tall: 10 rows of cells, twice as many columns as 10 * 64 / 40 pixels.
+    expect((await ui.find({ type: drawn }))?.props).toMatchObject({ columns: 32, rows: 10 })
     await ui.unmount()
   })
 }
